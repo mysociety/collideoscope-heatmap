@@ -27,7 +27,10 @@ def load_incidents():
 
 
 def write_heatmap(output, roads, incidents):
-    for road in islice(roads, 100):
+    # This is very slow, taking over 5 minutes to do 5000 features, and this is
+    # using deliberately narrow shapefiles covering a small area of central
+    # London. This approach is probably not going to work.
+    for road in islice(roads, 5000):
         geom = shape(snap_geometry(road['geometry'], ROAD_BUFFER))
         buffered = geom.buffer(ROAD_BUFFER, 3)
 
