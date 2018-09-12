@@ -1,0 +1,16 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+fiona = "*"
+shapely = {version = "*", extras = ["vectorized"]}
+
+[dev-packages]
+ipython = "*"
+pudb = "*"
+pylint = "*"
+
+[requires]
+python_version = "3.7"
