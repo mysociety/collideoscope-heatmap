@@ -6,6 +6,12 @@ name = "pypi"
 [packages]
 fiona = "*"
 shapely = {version = "*", extras = ["vectorized"]}
+rtree = "*"
+cython = "*"
+pyproj = {git = "https://github.com/jswhit/pyproj.git"}
+geopandas = "*"
+records = "*"
+"psycopg2" = "*"
 
 [dev-packages]
 ipython = "*"
