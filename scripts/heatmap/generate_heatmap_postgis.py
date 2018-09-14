@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
+from datetime import datetime
 
-import fiona
 import records
 from shapely.geometry import mapping, box, CAP_STYLE
 from shapely.wkb import loads
 from shapely.wkt import dumps
+import fiona
 
 DB = "postgres:///heatmap"
 OUTPUT_PATH = "output/heatmap.shp"
@@ -29,18 +30,20 @@ def main():
 
     with fiona.open(OUTPUT_PATH, 'w', **meta) as output:
         matches = 0
-        for road in db.query("SELECT * FROM roads"):
+        for i, road in enumerate(db.query("SELECT * FROM roads"), start=1):
             geom = loads(road.geom, hex=True)
+            buffered = geom.buffer(BUFFER, cap_style=CAP_STYLE.flat)
+            bbox = box(*buffered.bounds)
             q = """SELECT
                     COUNT(*)
                    FROM incidents
                    WHERE
-                    geom && ST_Envelope(ST_Buffer(ST_GeomFromText(:wkt, 27700), :distance))
-                    AND ST_Contains(ST_Buffer(ST_GeomFromText(:wkt, 27700), :distance), geom)
+                    geom && ST_GeomFromText(:bbox, 27700)
+                    AND ST_Contains(ST_GeomFromText(:buffered, 27700), geom)
                    """
-            count = db.query(q, wkt=dumps(geom), distance=BUFFER)[0].count
+            count = db.query(q, bbox=dumps(bbox), buffered=dumps(buffered))[0].count
             if count:
-                matches +=1
+                matches += 1
                 output.write({
                     'type': 'Feature',
                     'id': '-1',
@@ -49,7 +52,9 @@ def main():
                         'density': count / geom.length
                     }
                 })
-        print(matches)
+                if matches % 1000 == 0:
+                    print(datetime.now(), i, matches)
+        print(datetime.now(), i, matches)
 
 
 
