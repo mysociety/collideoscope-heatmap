@@ -1,76 +1,69 @@
 #!/usr/bin/env python3
-from itertools import islice
-from functools import reduce
+from datetime import datetime
+from functools import partial
 
-from shapely.geometry import mapping, shape, box, CAP_STYLE
+import records
+from shapely.geometry import mapping, box, CAP_STYLE
+from shapely.wkb import loads
+from shapely.wkt import dumps
+from shapely.ops import transform
 import fiona
+import pyproj
 
-ROADS_PATH = "data/exploded_roads.shp"
-INCIDENTS_PATH = "data/incidents.shp"
-OUTPUT_PATH = "output/heatmap.shp"
+DB = "postgres:///heatmap"
+OUTPUT_PATH = "output/heatmap.gpkg"
 
-ROAD_BUFFER = 25
+BUFFER = 25
 
-
-def load_roads():
-    return fiona.open(ROADS_PATH, 'r')
-
-
-def load_incidents():
-    # We need to iterate across all incidents for each road feature,
-    # and don't care about anything other than the geometry, so do some
-    # work up front by generating the geometry objects now
-    print("Loading incidents from {}".format(INCIDENTS_PATH))
-    incidents = [shape(snap_geometry(f['geometry'], ROAD_BUFFER)) for f in fiona.open(INCIDENTS_PATH, 'r')]
-    print("done.")
-    return incidents
-
-
-def write_heatmap(output, roads, incidents):
-    # This is very slow, taking over 5 minutes to do 5000 features, and this is
-    # using deliberately narrow shapefiles covering a small area of central
-    # London. This approach is probably not going to work.
-    for road in islice(roads, 5000):
-        geom = shape(snap_geometry(road['geometry'], ROAD_BUFFER))
-        buffered = geom.buffer(ROAD_BUFFER, 3)
-
-        # Iterating across all collisions is slow; should use a spatial index
-        count = sum(1 for p in incidents if buffered.contains(p))
-
-        try:
-            road['properties']['density'] = count / geom.length
-        except ZeroDivisionError:
-            continue # geom might have been snapped to zero-length, nevermind
-
-
-        # print(".", end="", flush=True)
-        output.write(road)
-
-def snap_geometry(g, precision):
-    coords = g['coordinates']
-    if g['type'] == 'Point':
-        coords = [coords]
-    g['coordinates'] = snap_coordinates(coords, precision)
-    if g['type'] == 'Point':
-        g['coordinates'] = g['coordinates'][0]
-    return g
-
-def snap_coordinates(coords, precision):
-    return [(
-        round(p[0] / precision, 0) * precision,
-        round(p[1] / precision, 0) * precision
-        ) for p in coords]
-
+reproject = partial(
+    pyproj.transform,
+    pyproj.Proj(init='epsg:27700'),
+    pyproj.Proj(init='epsg:3857'))
 
 def main():
-    roads = load_roads()
-    incidents = load_incidents()
-    roads.meta['schema']['properties']['density'] = 'float:10.2'
+    db = records.Database(DB)
+    print(db.query("SELECT COUNT(*) FROM roads")[0].count)
+    print(db.query("SELECT COUNT(*) FROM incidents")[0].count)
 
-    print("Writing to {}".format(OUTPUT_PATH))
-    with fiona.open(OUTPUT_PATH, 'w', **roads.meta) as output:
-        write_heatmap(output, roads, incidents)
-    print("done.")
+    meta = {
+            'crs': {'init': 'epsg:3857'},
+            'driver': 'GPKG',
+            'schema': {
+                'geometry': 'LineString',
+                'properties': {
+                    'density': 'float'
+                }
+            }
+        }
+
+    with fiona.open(OUTPUT_PATH, 'w', **meta) as output:
+        matches = 0
+        for i, road in enumerate(db.query("SELECT * FROM roads"), start=1):
+            geom = loads(road.geom, hex=True)
+            buffered = geom.buffer(BUFFER, cap_style=CAP_STYLE.flat)
+            bbox = box(*buffered.bounds)
+            q = """SELECT
+                    COUNT(*)
+                   FROM incidents
+                   WHERE
+                    geom && ST_GeomFromText(:bbox, 27700)
+                    AND ST_Contains(ST_GeomFromText(:buffered, 27700), geom)
+                   """
+            count = db.query(q, bbox=dumps(bbox), buffered=dumps(buffered))[0].count
+            if count:
+                matches += 1
+                output.write({
+                    'type': 'Feature',
+                    'id': '-1',
+                    'geometry': mapping(transform(reproject, geom)),
+                    'properties': {
+                        'density': count / geom.length
+                    }
+                })
+                if matches % 1000 == 0:
+                    print(datetime.now(), i, matches)
+        print(datetime.now(), i, matches)
+
 
 
 if __name__ == '__main__':
