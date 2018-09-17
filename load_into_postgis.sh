@@ -11,12 +11,12 @@ dropdb $DBNAME
 createdb -T template_postgis $DBNAME
 
 for SHP in $ROADS_SHPS/*.shp; do
-    shp2pgsql -S -s EPSG:27700 -D -p "$SHP" roads | psql -q -d $DBNAME
+    shp2pgsql -S -s EPSG:27700 -N skip -t 2D -D -p "$SHP" roads | psql -q -d $DBNAME
     break # Just create the table from the first file
 done
 
 for SHP in $ROADS_SHPS/*.shp; do
-    shp2pgsql -S -s EPSG:27700 -D -a "$SHP" roads | psql -q -d $DBNAME
+    shp2pgsql -S -s EPSG:27700 -N skip -t 2D -D -a "$SHP" roads | psql -q -d $DBNAME
 done
 
 psql -d $DBNAME -c "SELECT COUNT(*) FROM roads"
