@@ -1,16 +1,24 @@
 #!/usr/bin/env python3
 from datetime import datetime
+from functools import partial
 
 import records
 from shapely.geometry import mapping, box, CAP_STYLE
 from shapely.wkb import loads
 from shapely.wkt import dumps
+from shapely.ops import transform
 import fiona
+import pyproj
 
 DB = "postgres:///heatmap"
-OUTPUT_PATH = "output/heatmap.shp"
+OUTPUT_PATH = "output/heatmap.gpkg"
 
 BUFFER = 25
+
+reproject = partial(
+    pyproj.transform,
+    pyproj.Proj(init='epsg:27700'),
+    pyproj.Proj(init='epsg:3857'))
 
 def main():
     db = records.Database(DB)
@@ -18,8 +26,8 @@ def main():
     print(db.query("SELECT COUNT(*) FROM incidents")[0].count)
 
     meta = {
-            'crs': {'init': 'epsg:27700'},
-            'driver': 'ESRI Shapefile',
+            'crs': {'init': 'epsg:3857'},
+            'driver': 'GPKG',
             'schema': {
                 'geometry': 'LineString',
                 'properties': {
@@ -47,7 +55,7 @@ def main():
                 output.write({
                     'type': 'Feature',
                     'id': '-1',
-                    'geometry': mapping(geom),
+                    'geometry': mapping(transform(reproject, geom)),
                     'properties': {
                         'density': count / geom.length
                     }
