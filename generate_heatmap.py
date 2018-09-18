@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import sys
 from datetime import datetime
 from functools import partial
 from zipfile import ZipFile
@@ -14,26 +15,33 @@ import pyproj
 
 
 # These environment variables determine the data sources used by the script.
-# The first two are mandatory.
 
 # This should be the path to the OS Open Roads zip file (oproad_essh_gb.zip).
 # It does not need to be unzipped - the script handles that.
+# Required.
 OS_OPEN_ROADS_PATH = os.environ['OS_OPEN_ROADS_PATH']
 
-# This is the PostGIS database where load_into_postgis.sh stored the incidents.
-DATABASE_URL = os.environ['DATABASE_URL']
+# This is the Collideoscope database, where incident lat/lons will be read from.
+# Required.
+COLLIDEOSCOPE_DATABASE_URL = os.environ['COLLIDEOSCOPE_DATABASE_URL']
 
-# Optional, sets where the output GeoPackage will be written. By default
-# it will be 'heatmap.gpkg' in the working directory.
+# Sets where the output GeoPackage will be written.
+# Optional. By default it will be 'heatmap.gpkg' in the working directory.
 OUTPUT_PATH = os.environ.get('OUTPUT_PATH', 'heatmap.gpkg')
 
-# Optional, controls the distance (in metres) to buffer each road feature by
+# Controls the distance (in metres) to buffer each road feature by
 # when determining incident density.
+# Optional. Defaults to 25M.
 BUFFER = int(os.environ.get("BUFFER", 25))
 
 
+def log(*msgs):
+    """Because sometimes logging.getLogger is too much"""
+    print(datetime.now(), *msgs, file=sys.stderr)
+
+
 def read_shapefile(path):
-    print("Processing {}".format(os.path.basename(path)))
+    log("Processing {}".format(os.path.basename(path)))
     with fiona.open(path, 'r') as shapefile:
         for feature in shapefile:
             yield shape(feature['geometry'])
@@ -50,8 +58,36 @@ def load_roads():
                 yield from read_shapefile(os.path.join(tmpdir, shp))
 
 
+def load_collideoscope_database():
+    log("Loading incidents from Collideoscope...")
+    db = records.Database("sqlite:///:memory:")
+    sqlite = db.db.engine.raw_connection().connection
+    sqlite.enable_load_extension(True)
+    sqlite.load_extension("mod_spatialite")
+    db.query("SELECT InitSpatialMetadata(1)")
+    db.query("CREATE TABLE incidents ( id INTEGER NOT NULL PRIMARY KEY )")
+    db.query("SELECT AddGeometryColumn('incidents', 'geom', 27700, 'POINT', 'XY', 1)")
+    db.query("SELECT CreateSpatialIndex('incidents', 'geom')")
+
+    wgs_to_bng = partial(
+        pyproj.transform,
+        pyproj.Proj(init='epsg:4326'),
+        pyproj.Proj(init='epsg:27700'))
+
+    with records.Database(COLLIDEOSCOPE_DATABASE_URL) as collideoscope:
+        for rid, lat, lon in collideoscope.query("SELECT id, latitude, longitude FROM problem WHERE confirmed IS NOT NULL"):
+            x, y = wgs_to_bng(lon, lat)
+            x, y = round(x, 2), round(y, 2)
+            wkt = 'POINT({} {})'.format(x, y)
+            db.query("INSERT INTO incidents (id, geom) VALUES (:id, PointFromText(:wkt, 27700))", id=rid, wkt=wkt)
+
+    count = db.query("SELECT COUNT(*) AS count FROM incidents")[0].count
+    log("Loaded {} incidents from Collideoscope DB.".format(count))
+    return db
+
+
 def main():
-    db = records.Database(DATABASE_URL)
+    db = load_collideoscope_database()
 
     reproject = partial(
         pyproj.transform,
@@ -75,15 +111,19 @@ def main():
             buffered = geom.buffer(BUFFER, cap_style=CAP_STYLE.flat)
             bbox = box(*buffered.bounds)
             q = """SELECT
-                    COUNT(*)
+                    COUNT(*) AS count
                    FROM incidents
                    WHERE
-                    geom && ST_GeomFromText(:bbox, 27700)
+                    ROWID IN (
+                        SELECT ROWID
+                        FROM SpatialIndex
+                        WHERE f_table_name = 'incidents'
+                        AND search_frame = ST_GeomFromText(:bbox, 27700)
+                    )
                     AND ST_Contains(ST_GeomFromText(:buffered, 27700), geom)
                    """
             count = db.query(q, bbox=dumps(bbox), buffered=dumps(buffered))[0].count
             if count:
-                matches += 1
                 output.write({
                     'type': 'Feature',
                     'id': '-1',
@@ -92,9 +132,10 @@ def main():
                         'density': count / geom.length
                     }
                 })
-                if matches % 1000 == 0 or i % 1000 == 0:
-                    print(datetime.now(), i, matches)
-        print(datetime.now(), i, matches)
+                matches += 1
+                if matches % 1000 == 0:
+                    log("Found {} features from {} so far".format(matches, i))
+        log("Found {} features with incidents.".format(matches))
 
 
 if __name__ == '__main__':
