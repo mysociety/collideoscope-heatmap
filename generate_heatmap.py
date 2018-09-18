@@ -74,9 +74,15 @@ def load_roads():
 def load_collideoscope_database():
     log("Loading incidents from Collideoscope...")
     db = records.Database("sqlite:///:memory:")
+
     sqlite = db.db.engine.raw_connection().connection
     sqlite.enable_load_extension(True)
-    sqlite.load_extension("mod_spatialite")
+    try:
+        sqlite.load_extension("mod_spatialite.so")
+    except sqlite3.OperationalError:
+        # On macOS it should be called without the extension.
+        sqlite.load_extension("mod_spatialite")
+
     db.query("SELECT InitSpatialMetadata(1)")
     db.query("CREATE TABLE incidents ( id INTEGER NOT NULL PRIMARY KEY )")
     db.query("SELECT AddGeometryColumn('incidents', 'geom', 27700, 'POINT', 'XY', 1)")
