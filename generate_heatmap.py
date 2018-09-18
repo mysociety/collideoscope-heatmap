@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 import os
 import sys
+import sqlite3
+from io import BytesIO
 from datetime import datetime
 from functools import partial
 from zipfile import ZipFile
 from tempfile import TemporaryDirectory
 
 import records
+import requests
 from shapely.geometry import shape, mapping, box, CAP_STYLE
 from shapely.wkt import dumps
 from shapely.ops import transform
@@ -16,14 +19,16 @@ import pyproj
 
 # These environment variables determine the data sources used by the script.
 
-# This should be the path to the OS Open Roads zip file (oproad_essh_gb.zip).
-# It does not need to be unzipped - the script handles that.
-# Required.
-OS_OPEN_ROADS_PATH = os.environ['OS_OPEN_ROADS_PATH']
-
 # This is the Collideoscope database, where incident lat/lons will be read from.
 # Required.
 COLLIDEOSCOPE_DATABASE_URL = os.environ['COLLIDEOSCOPE_DATABASE_URL']
+
+# This should be the path to the OS Open Roads zip file (oproad_essh_gb.zip),
+# or a URL where it can be downloaded from.
+# It does not need to be unzipped - the script handles that.
+# Optional. Defaults to downloading a copy from a known URL.
+OS_OPEN_ROADS_PATH = os.environ.get('OS_OPEN_ROADS_PATH',
+    'https://firefly.ukcod.org.uk/~davea/os/oproad_essh_gb.zip')
 
 # Sets where the output GeoPackage will be written.
 # Optional. By default it will be 'heatmap.gpkg' in the working directory.
@@ -48,7 +53,15 @@ def read_shapefile(path):
 
 
 def load_roads():
-    with ZipFile(OS_OPEN_ROADS_PATH) as z:
+    if OS_OPEN_ROADS_PATH.startswith("http"):
+        log("Downloading oproad_essh_gb.zip from {}".format(OS_OPEN_ROADS_PATH))
+        response = requests.get(OS_OPEN_ROADS_PATH)
+        log("done.")
+        openroads_zip = BytesIO(response.content)
+    else:
+        openroads_zip = OS_OPEN_ROADS_PATH
+
+    with ZipFile(openroads_zip) as z:
         for shp in (f for f in z.namelist() if f.endswith("RoadLink.shp")):
             prefix = shp.rsplit(".", 1)[0]
             files = ["{}.{}".format(prefix, ext) for ext in ["dbf", "prj", "shp", "shx"]]

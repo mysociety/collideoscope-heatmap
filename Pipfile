@@ -12,6 +12,7 @@ pyproj = {git = "https://github.com/jswhit/pyproj.git"}
 geopandas = "*"
 records = "*"
 "psycopg2" = "*"
+requests = "*"
 
 [dev-packages]
 ipython = "*"
