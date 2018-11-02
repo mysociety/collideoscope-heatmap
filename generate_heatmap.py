@@ -28,7 +28,7 @@ COLLIDEOSCOPE_DATABASE_URL = os.environ['COLLIDEOSCOPE_DATABASE_URL']
 # It does not need to be unzipped - the script handles that.
 # Optional. Defaults to downloading a copy from a known URL.
 OS_OPEN_ROADS_PATH = os.environ.get('OS_OPEN_ROADS_PATH',
-    'https://firefly.ukcod.org.uk/~davea/os/oproad_essh_gb.zip')
+    'http://parlvid.mysociety.org/os/oproad_essh_gb-2018-10.zip')
 
 # Sets where the output GeoPackage will be written.
 # Optional. By default it will be 'heatmap.gpkg' in the working directory.
